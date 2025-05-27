@@ -1,8 +1,8 @@
 use crate::raw::{Hash, Header, ImageData};
 use std::error::Error;
 use std::ffi::CStr;
-use zerocopy::network_endian::U32;
 use zerocopy::TryFromBytes;
+use zerocopy::network_endian::U32;
 
 pub mod raw;
 
@@ -50,34 +50,11 @@ impl<'a> IconCache<'a> {
         }
     }
 
-    pub fn icon_chain<'c: 'a>(
-        &'c self,
-        bucket: u32,
-    ) -> Result<IconChain<'a, 'c>, Box<dyn Error + 'c>> {
+    pub fn icon_chain(&self, bucket: u32) -> Result<IconChain<'a>, Box<dyn Error + 'a>> {
         debug_assert!(bucket < self.hash.n_buckets.get());
 
         let icon_offset = self.hash.icon_offset[bucket as usize].get();
-        self.icon_chain_at_offset(icon_offset)
-    }
-
-    fn icon_chain_at_offset<'c: 'a>(
-        &'c self,
-        offset: u32,
-    ) -> Result<IconChain<'a, 'c>, Box<dyn Error + 'a>> {
-        let raw_icon =
-            raw::Icon::try_ref_from_prefix(&self.bytes[offset as usize..]).map(|(icon, _)| icon)?;
-
-        let name = CStr::from_bytes_until_nul(self.at(raw_icon.name_offset))?;
-        let (image_list, _) =
-            raw::ImageList::try_ref_from_prefix(self.at(raw_icon.image_list_offset))?;
-
-        let icon = Icon { name, image_list };
-
-        Ok(IconChain {
-            cache: self,
-            chain: raw_icon.chain_offset.get(),
-            icon,
-        })
+        IconChain::new_at_offset(self.bytes, icon_offset)
     }
 
     fn at(&self, offset: U32) -> &[u8] {
@@ -86,25 +63,54 @@ impl<'a> IconCache<'a> {
 }
 
 #[derive(derive_more::Debug, Copy, Clone)]
-pub struct IconChain<'a, 'c> {
+pub struct IconChain<'a> {
     #[debug(skip)]
-    pub cache: &'c IconCache<'a>,
+    pub bytes: &'a [u8],
     pub chain: u32,
     pub icon: Icon<'a>,
+}
+
+impl<'a> IconChain<'a> {
+    fn new_at_offset(bytes: &'a [u8], offset: u32) -> Result<IconChain<'a>, Box<dyn Error + 'a>> {
+        let raw_icon =
+            raw::Icon::try_ref_from_prefix(&bytes[offset as usize..]).map(|(icon, _)| icon)?;
+
+        let name = &bytes[raw_icon.name_offset.get() as usize..];
+        let name = CStr::from_bytes_until_nul(name)?;
+
+        let image_list = &bytes[raw_icon.image_list_offset.get() as usize..];
+        let (image_list, _) = raw::ImageList::try_ref_from_prefix(image_list)?;
+
+        let icon = Icon {
+            name,
+            image_list: ImageList(image_list),
+        };
+
+        Ok(IconChain {
+            bytes,
+            chain: raw_icon.chain_offset.get(),
+            icon,
+        })
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct Icon<'a> {
     pub name: &'a CStr,
-    pub image_list: &'a raw::ImageList,
+    pub image_list: ImageList<'a>,
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct ImageList<'a>(pub &'a raw::ImageList);
 
 impl<'a> ImageList<'a> {
+    pub fn len(&self) -> u32 {
+        self.0.n_images.get()
+    }
+
     pub fn image(&self, idx: u32) {
         debug_assert!(idx < self.0.n_images.get());
-        
+
         // let list = self.0;
         todo!()
     }
@@ -116,16 +122,13 @@ pub struct Image<'a> {
     pub image_data: &'a ImageData,
 }
 
-impl<'a, 'c> IconChain<'a, 'c>
-where
-    'c: 'a,
-{
-    pub fn next_in_chain(&self) -> Option<Result<IconChain<'a, 'c>, Box<dyn Error + 'c>>> {
+impl<'a> IconChain<'a> {
+    pub fn next_in_chain(&self) -> Option<Result<IconChain<'a>, Box<dyn Error + 'a>>> {
         if self.chain == 0xFFFFFFFF {
             return None;
         }
 
-        Some(self.cache.icon_chain_at_offset(self.chain))
+        Some(IconChain::new_at_offset(self.bytes, self.chain))
     }
 }
 
@@ -168,11 +171,11 @@ mod tests {
         );
 
         assert_eq!(cache.hash.n_buckets, 251);
-        
+
         let icon = cache.icon("preferences-other-symbolic").unwrap();
 
         assert_eq!(icon.name.to_str(), Ok("preferences-other-symbolic"));
-        assert_eq!(icon.image_list.n_images, 1);
+        assert_eq!(icon.image_list.len(), 1);
 
         Ok(())
     }

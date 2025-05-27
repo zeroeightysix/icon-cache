@@ -1,4 +1,7 @@
-use zerocopy::{*, byteorder::network_endian::{U16, U32}};
+use zerocopy::{
+    byteorder::network_endian::{U16, U32},
+    *,
+};
 
 #[repr(C)]
 #[derive(Debug, FromZeros, KnownLayout, Immutable, Eq, PartialEq)]
@@ -27,7 +30,7 @@ pub struct Hash {
 #[derive(Debug, Copy, Clone, FromZeros, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct Icon {
     pub chain_offset: U32, // Points to another Icon
-    pub name_offset: U32, // Points to a C string
+    pub name_offset: U32,  // Points to a C string
     pub image_list_offset: U32,
 }
 
@@ -110,7 +113,7 @@ pub struct EmbeddedRect {
 #[derive(Debug, TryFromBytes, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct AttachPointList {
     pub n_attach_points: U32,
-    pub attach_points: [AttachPoint]
+    pub attach_points: [AttachPoint],
 }
 
 #[repr(C)]
