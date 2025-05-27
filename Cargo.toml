@@ -7,4 +7,5 @@ edition = "2024"
 alloc = ["zerocopy/alloc"]
 
 [dependencies]
+memmap2 = "0.9.5"
 zerocopy = { version = "0.8.25", features = ["derive"] }
