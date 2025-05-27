@@ -1,8 +1,7 @@
-use crate::raw::{Hash, Header, ImageData};
+use crate::raw::{DirectoryList, Hash, Header};
 use std::error::Error;
 use std::ffi::CStr;
-use zerocopy::TryFromBytes;
-use zerocopy::network_endian::U32;
+use zerocopy::{FromBytes, TryCastError};
 
 pub mod raw;
 
@@ -12,19 +11,21 @@ pub struct IconCache<'a> {
     pub bytes: &'a [u8],
     pub header: &'a Header,
     pub hash: &'a Hash,
+    pub directory_list: &'a DirectoryList,
 }
 
 impl<'a> IconCache<'a> {
     pub fn new_from_bytes(bytes: &'a [u8]) -> Result<Self, Box<dyn Error + 'a>> {
-        let (header, _) = Header::try_ref_from_prefix(bytes)?;
+        let (header, _) = Header::ref_from_prefix(bytes)?;
 
-        let hash_offset = header.hash_offset.get() as usize;
-        let (hash, _) = Hash::try_ref_from_prefix(&bytes[hash_offset..])?;
+        let hash = header.hash.at(bytes)?;
+        let directory_list = header.directory_list.at(bytes)?;
 
         Ok(IconCache {
             bytes,
             header,
             hash,
+            directory_list,
         })
     }
 
@@ -34,63 +35,35 @@ impl<'a> IconCache<'a> {
         let n_buckets = self.hash.n_buckets.get();
         let bucket = hash % n_buckets;
 
-        let mut chain = self.icon_chain(bucket).ok()?;
+        let mut icon = self.icon_chain(bucket).ok()?;
         loop {
-            if chain.icon.name.to_bytes() == icon_name {
-                let icon: Icon<'a> = chain.icon;
-
-                return Some(icon);
+            if let Ok(name) = icon.name.str_at(self.bytes) {
+                if name.to_bytes() == icon_name {
+                    return Some(Icon {
+                        name,
+                        image_list: ImageList {
+                            bytes: self.bytes,
+                            raw_list: icon.image_list.at(self.bytes).ok()?,
+                        },
+                    });
+                }
             }
 
-            let Some(Ok(next_chain)) = chain.next_in_chain() else {
+            if icon.chain.offset == 0xFFFFFFFF {
                 return None;
-            };
+            }
 
-            chain = next_chain;
+            icon = icon.chain.at(self.bytes).ok()?;
         }
     }
 
-    pub fn icon_chain(&self, bucket: u32) -> Result<IconChain<'a>, Box<dyn Error + 'a>> {
+    pub fn icon_chain(
+        &self,
+        bucket: u32,
+    ) -> Result<&'a raw::Icon, TryCastError<&'a [u8], raw::Icon>> {
         debug_assert!(bucket < self.hash.n_buckets.get());
 
-        let icon_offset = self.hash.icon_offset[bucket as usize].get();
-        IconChain::new_at_offset(self.bytes, icon_offset)
-    }
-
-    fn at(&self, offset: U32) -> &[u8] {
-        &self.bytes[offset.get() as usize..]
-    }
-}
-
-#[derive(derive_more::Debug, Copy, Clone)]
-pub struct IconChain<'a> {
-    #[debug(skip)]
-    pub bytes: &'a [u8],
-    pub chain: u32,
-    pub icon: Icon<'a>,
-}
-
-impl<'a> IconChain<'a> {
-    fn new_at_offset(bytes: &'a [u8], offset: u32) -> Result<IconChain<'a>, Box<dyn Error + 'a>> {
-        let raw_icon =
-            raw::Icon::try_ref_from_prefix(&bytes[offset as usize..]).map(|(icon, _)| icon)?;
-
-        let name = &bytes[raw_icon.name_offset.get() as usize..];
-        let name = CStr::from_bytes_until_nul(name)?;
-
-        let image_list = &bytes[raw_icon.image_list_offset.get() as usize..];
-        let (image_list, _) = raw::ImageList::try_ref_from_prefix(image_list)?;
-
-        let icon = Icon {
-            name,
-            image_list: ImageList(image_list),
-        };
-
-        Ok(IconChain {
-            bytes,
-            chain: raw_icon.chain_offset.get(),
-            icon,
-        })
+        self.hash.icon[bucket as usize].at(self.bytes)
     }
 }
 
@@ -100,37 +73,54 @@ pub struct Icon<'a> {
     pub image_list: ImageList<'a>,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct ImageList<'a>(pub &'a raw::ImageList);
+#[derive(derive_more::Debug, Copy, Clone)]
+pub struct ImageList<'a> {
+    #[debug(skip)]
+    pub bytes: &'a [u8],
+    pub raw_list: &'a raw::ImageList,
+}
 
 impl<'a> ImageList<'a> {
     pub fn len(&self) -> u32 {
-        self.0.n_images.get()
+        self.raw_list.n_images.get()
     }
 
-    pub fn image(&self, idx: u32) {
-        debug_assert!(idx < self.0.n_images.get());
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
-        // let list = self.0;
-        todo!()
+    pub fn image(&self, idx: u32) -> Result<Image<'a>, Box<dyn Error + 'a>> {
+        debug_assert!(idx < self.raw_list.n_images.get());
+
+        let raw_image = &self.raw_list.images[idx as usize];
+
+        // TODO: how does the overhead of re-interpreting the header and directory list here over
+        // passing those down from the cache struct, or alternatively re-introducing the ref to cache?
+        let (header, _) = Header::ref_from_prefix(self.bytes)?;
+        let directory_list = header.directory_list.at(self.bytes)?;
+        let directory = directory_list.directory[raw_image.directory_index.get() as usize]
+            .str_at(self.bytes)?;
+
+        let icon_flags = raw_image.icon_flags;
+
+        let image_data = raw_image.image_data.at(self.bytes)?;
+
+        Ok(Image {
+            directory,
+            icon_flags,
+            image_data,
+        })
     }
 }
 
+#[derive(derive_more::Debug, Copy, Clone)]
 pub struct Image<'a> {
     pub directory: &'a CStr,
     pub icon_flags: raw::Flags,
-    pub image_data: &'a ImageData,
+    pub image_data: &'a raw::ImageData,
 }
 
-impl<'a> IconChain<'a> {
-    pub fn next_in_chain(&self) -> Option<Result<IconChain<'a>, Box<dyn Error + 'a>>> {
-        if self.chain == 0xFFFFFFFF {
-            return None;
-        }
-
-        Some(IconChain::new_at_offset(self.bytes, self.chain))
-    }
-}
+pub struct ImageData {}
 
 pub fn icon_str_hash(key: impl AsRef<[u8]>) -> u32 {
     let bytes = key.as_ref();
@@ -150,6 +140,7 @@ pub fn icon_str_hash(key: impl AsRef<[u8]>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raw::Offset;
     use zerocopy::network_endian::U16;
 
     #[test]
@@ -165,8 +156,8 @@ mod tests {
             &Header {
                 major_version: U16::new(1,),
                 minor_version: U16::new(0,),
-                hash_offset: U32::new(12,),
-                directory_list_offset: U32::new(37788,),
+                hash: Offset::new(12,),
+                directory_list: Offset::new(37788,),
             }
         );
 
@@ -176,6 +167,10 @@ mod tests {
 
         assert_eq!(icon.name.to_str(), Ok("preferences-other-symbolic"));
         assert_eq!(icon.image_list.len(), 1);
+
+        let image = &icon.image_list.image(0).unwrap();
+
+        println!("{:#?}", image);
 
         Ok(())
     }
