@@ -1,21 +1,17 @@
-use crate::raw::{Hash, Header};
+use crate::raw::{Hash, Header, ImageData};
 use std::error::Error;
 use std::ffi::CStr;
+use zerocopy::network_endian::U32;
 use zerocopy::TryFromBytes;
 
 pub mod raw;
 
+#[derive(derive_more::Debug, Copy, Clone)]
 pub struct IconCache<'a> {
+    #[debug(skip)]
     pub bytes: &'a [u8],
     pub header: &'a Header,
     pub hash: &'a Hash,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct Icon<'a> {
-    pub chain: &'a CStr,
-    pub name: &'a CStr,
-    pub image_list: &'a raw::ImageList,
 }
 
 impl<'a> IconCache<'a> {
@@ -32,35 +28,109 @@ impl<'a> IconCache<'a> {
         })
     }
 
-    pub fn icon(&self, icon_idx: usize) -> Option<Icon> {
-        if icon_idx > self.hash.n_buckets.get() as usize {
-            return None;
+    pub fn icon<'c: 'a>(&'c self, icon_name: impl AsRef<[u8]>) -> Option<Icon<'a>> {
+        let icon_name = icon_name.as_ref();
+        let hash = icon_str_hash(icon_name);
+        let n_buckets = self.hash.n_buckets.get();
+        let bucket = hash % n_buckets;
+
+        let mut chain = self.icon_chain(bucket).ok()?;
+        loop {
+            if chain.icon.name.to_bytes() == icon_name {
+                let icon: Icon<'a> = chain.icon;
+
+                return Some(icon);
+            }
+
+            let Some(Ok(next_chain)) = chain.next_in_chain() else {
+                return None;
+            };
+
+            chain = next_chain;
         }
+    }
 
-        let icon_offset = self.hash.icon_offset[icon_idx].get() as usize;
-        let icon = raw::Icon::try_ref_from_prefix(&self.bytes[icon_offset..])
-            .ok()
-            .map(|(icon, _)| icon)?;
+    pub fn icon_chain<'c: 'a>(
+        &'c self,
+        bucket: u32,
+    ) -> Result<IconChain<'a, 'c>, Box<dyn Error + 'c>> {
+        debug_assert!(bucket < self.hash.n_buckets.get());
 
-        let chain = CStr::from_bytes_until_nul(self.at(icon.chain_offset)).ok()?;
-        let name = CStr::from_bytes_until_nul(self.at(icon.name_offset)).ok()?;
+        let icon_offset = self.hash.icon_offset[bucket as usize].get();
+        self.icon_chain_at_offset(icon_offset)
+    }
+
+    fn icon_chain_at_offset<'c: 'a>(
+        &'c self,
+        offset: u32,
+    ) -> Result<IconChain<'a, 'c>, Box<dyn Error + 'a>> {
+        let raw_icon =
+            raw::Icon::try_ref_from_prefix(&self.bytes[offset as usize..]).map(|(icon, _)| icon)?;
+
+        let name = CStr::from_bytes_until_nul(self.at(raw_icon.name_offset))?;
         let (image_list, _) =
-            raw::ImageList::try_ref_from_prefix(self.at(icon.image_list_offset)).ok()?;
+            raw::ImageList::try_ref_from_prefix(self.at(raw_icon.image_list_offset))?;
 
-        Some(Icon {
-            chain,
-            name,
-            image_list,
+        let icon = Icon { name, image_list };
+
+        Ok(IconChain {
+            cache: self,
+            chain: raw_icon.chain_offset.get(),
+            icon,
         })
     }
 
-    fn at(&self, offset: zerocopy::network_endian::U32) -> &[u8] {
+    fn at(&self, offset: U32) -> &[u8] {
         &self.bytes[offset.get() as usize..]
     }
 }
 
-pub fn icon_str_hash(key: &CStr) -> u32 {
-    let bytes = key.to_bytes();
+#[derive(derive_more::Debug, Copy, Clone)]
+pub struct IconChain<'a, 'c> {
+    #[debug(skip)]
+    pub cache: &'c IconCache<'a>,
+    pub chain: u32,
+    pub icon: Icon<'a>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Icon<'a> {
+    pub name: &'a CStr,
+    pub image_list: &'a raw::ImageList,
+}
+
+pub struct ImageList<'a>(pub &'a raw::ImageList);
+
+impl<'a> ImageList<'a> {
+    pub fn image(&self, idx: u32) {
+        debug_assert!(idx < self.0.n_images.get());
+        
+        // let list = self.0;
+        todo!()
+    }
+}
+
+pub struct Image<'a> {
+    pub directory: &'a CStr,
+    pub icon_flags: raw::Flags,
+    pub image_data: &'a ImageData,
+}
+
+impl<'a, 'c> IconChain<'a, 'c>
+where
+    'c: 'a,
+{
+    pub fn next_in_chain(&self) -> Option<Result<IconChain<'a, 'c>, Box<dyn Error + 'c>>> {
+        if self.chain == 0xFFFFFFFF {
+            return None;
+        }
+
+        Some(self.cache.icon_chain_at_offset(self.chain))
+    }
+}
+
+pub fn icon_str_hash(key: impl AsRef<[u8]>) -> u32 {
+    let bytes = key.as_ref();
 
     if bytes.is_empty() {
         return 0;
@@ -77,54 +147,48 @@ pub fn icon_str_hash(key: &CStr) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raw::DirectoryList;
-    use std::ffi::{c_void, CString};
-    use zerocopy::{byteorder::network_endian::U32, IntoBytes, TryFromBytes};
-
-    use memmap2::Mmap;
-    use std::error::Error;
-    use std::fs::File;
-    use std::ops::Deref;
+    use zerocopy::network_endian::U16;
 
     #[test]
-    fn test() -> Result<(), Box<dyn Error>> {
-        let file = File::open("/usr/share/icons/gnome/icon-theme.cache")?;
+    fn test_find_specific_icon() -> Result<(), Box<dyn Error>> {
+        // The included sample cache file was generated using the gtk-update-icon-cache utility
+        // from my system-installed Adwaita theme.
+        static SAMPLE_INDEX_FILE: &[u8] = include_bytes!("../assets/icon-theme.cache");
 
-        let mmap = unsafe { Mmap::map(&file)? };
-        let cache = IconCache::new_from_bytes(mmap.deref()).unwrap();
+        let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
 
-        let icon = cache.icon(1).unwrap();
+        assert_eq!(
+            cache.header,
+            &Header {
+                major_version: U16::new(1,),
+                minor_version: U16::new(0,),
+                hash_offset: U32::new(12,),
+                directory_list_offset: U32::new(37788,),
+            }
+        );
 
-        println!("{:?}", icon.name);
-        println!("{:?}", icon.chain);
+        assert_eq!(cache.hash.n_buckets, 251);
+        
+        let icon = cache.icon("preferences-other-symbolic").unwrap();
+
+        assert_eq!(icon.name.to_str(), Ok("preferences-other-symbolic"));
+        assert_eq!(icon.image_list.n_images, 1);
 
         Ok(())
     }
 
     #[test]
-    fn g_str_hash_empty() {
-        let c_str = CString::new("").unwrap();
-
-        assert_eq!(icon_str_hash(&c_str), 0);
+    fn icon_str_hash_empty() {
+        assert_eq!(icon_str_hash(""), 0);
     }
 
     #[test]
-    fn g_str_hash_hello_world() {
-        let c_str = CString::new("hello world").unwrap();
-        let ptr = c_str.as_ptr() as *const c_void;
-        // assert_eq!(g_str_hash(&c_str), hash);
-        // TODO: icon_str_hash is NOT g_str_hash, figure out from the actual files what
-        // the expected values are
+    fn icon_str_hash_hello_world() {
+        assert_eq!(icon_str_hash("hello world"), 1794106052);
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
-    fn it_works() {
-        let bytes: [U32; 4] = [3.into(), 1.into(), 2.into(), 3.into()];
-        let bytes = bytes.as_bytes();
-
-        let result = DirectoryList::try_ref_from_bytes(bytes).unwrap();
-
-        println!("{:?}", result);
+    fn icon_str_hash_sym() {
+        assert_eq!(icon_str_hash("preferences-other-symbolic") % 251, 243);
     }
 }
