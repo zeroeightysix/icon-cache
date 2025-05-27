@@ -1,0 +1,10 @@
+[package]
+name = "iconcache"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+alloc = ["zerocopy/alloc"]
+
+[dependencies]
+zerocopy = { version = "0.8.25", features = ["derive"] }
