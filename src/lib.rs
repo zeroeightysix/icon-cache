@@ -1,15 +1,35 @@
+//! Complete and user-friendly zero-copy wrappers for the GTK icon cache which is present on most
+//! linux systems.
+//! 
+//! GTK's icon cache maintains a hash-indexed map from icon names (e.g. `open-menu`) to a list of
+//! images representing that icon, each in a different directory, usually denoting that icon's size,
+//! whether it's scalable, etc.
+//! 
+//! This crate provides a safe wrapper around this cache and is designed for use with `mmap`.
+//! To get started, look at [IconCache].
+
 use std::error::Error;
 use std::ffi::CStr;
 use zerocopy::{FromBytes, TryCastError};
 
 pub mod raw;
 
+/// Thin wrapper around an in-memory icon cache.
+///
+/// This is `icon-cache`'s main entrypoint. To look up an icon, use the [icon](IconCache::icon) function.
+///
+/// `IconCache`'s fields may be interesting for advanced uses, but if all you need is to look up
+/// icons—use [icon](IconCache::icon).
 #[derive(derive_more::Debug, Copy, Clone)]
 pub struct IconCache<'a> {
+    /// The raw bytes representing the cache
     #[debug(skip)]
     pub bytes: &'a [u8],
+    /// Cache header file: contains version and hash & directory list offsets
     pub header: &'a raw::Header,
+    /// Internal hash table storing mapping from icon names to icon information
     pub hash: &'a raw::Hash,
+    /// List of directories within the theme, relative to the theme's root
     pub directory_list: DirectoryList<'a>,
 }
 
@@ -32,6 +52,10 @@ impl<'a> IconCache<'a> {
         })
     }
 
+    /// Look up an icon by name in the cache. `icon_name` accepts any type that turns into a byte
+    /// slice: typically `str` suffices.
+    /// 
+    /// Returns `None` if no icon by that name exists within the icon theme, or if parsing failed.
     pub fn icon(&self, icon_name: impl AsRef<[u8]>) -> Option<Icon<'a>> {
         let icon_name = icon_name.as_ref();
         let hash = icon_str_hash(icon_name);
@@ -59,8 +83,10 @@ impl<'a> IconCache<'a> {
             icon = icon.chain.at(self.bytes).ok()?;
         }
     }
-
-    pub fn icon_chain(
+    
+    // TODO: iter()
+    
+    fn icon_chain(
         &self,
         bucket: u32,
     ) -> Result<&'a raw::Icon, TryCastError<&'a [u8], raw::Icon>> {
@@ -70,6 +96,7 @@ impl<'a> IconCache<'a> {
     }
 }
 
+/// List of directories in the icon theme with paths relative to the root of the icon theme.
 #[derive(derive_more::Debug, Copy, Clone)]
 pub struct DirectoryList<'a> {
     #[debug(skip)]
@@ -79,16 +106,21 @@ pub struct DirectoryList<'a> {
 }
 
 impl<'a> DirectoryList<'a> {
+    /// Returns the amount of directories in this list
     #[inline(always)]
-    fn len(&self) -> u32 {
+    pub fn len(&self) -> u32 {
         self.raw_list.n_directories.get()
     }
 
-    fn is_empty(&self) -> bool {
+    /// Returns `true` if the list is empty
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    fn dir(&self, idx: u32) -> Option<&'a CStr> {
+    /// Access a directory by its index in the list.
+    /// 
+    /// Returns `None` if the index larger than the length of the list.
+    pub fn dir(&self, idx: u32) -> Option<&'a CStr> {
         if idx >= self.len() {
             return None;
         }
@@ -98,11 +130,13 @@ impl<'a> DirectoryList<'a> {
             .ok()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &'a CStr> {
+    /// Returns an iterator over the directory list
+    pub fn iter(&self) -> impl Iterator<Item = &'a CStr> {
         (0..self.len()).filter_map(|idx| self.dir(idx))
     }
 }
 
+/// An icon, identified by its name, and the list of images provided by the icon theme for this icon.
 #[derive(Debug, Copy, Clone)]
 pub struct Icon<'a> {
     pub name: &'a CStr,
@@ -117,14 +151,20 @@ pub struct ImageList<'a> {
 }
 
 impl<'a> ImageList<'a> {
+    /// Returns the amount of images in this list
     pub fn len(&self) -> u32 {
         self.raw_list.n_images.get()
     }
 
+    /// Returns `true` if the list is empty
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Access an image by its index in the list.
+    ///
+    /// Returns `None` if the index larger than the length of the list, or if the image data
+    /// failed to parse.
     pub fn image(&self, idx: u32) -> Option<Image<'a>> {
         if idx >= self.len() {
             return None;
@@ -167,9 +207,9 @@ impl<'a> ImageList<'a> {
         })
     }
 
+    /// Returns an iterator over the image list
     pub fn iter(&self) -> impl Iterator<Item = Image<'a>> {
-        (0..self.len())
-            .filter_map(|idx| self.image(idx))
+        (0..self.len()).filter_map(|idx| self.image(idx))
     }
 }
 
@@ -188,7 +228,7 @@ pub struct ImageData<'a> {
     pub image_pixel_data_length: (),
 }
 
-pub fn icon_str_hash(key: impl AsRef<[u8]>) -> u32 {
+fn icon_str_hash(key: impl AsRef<[u8]>) -> u32 {
     let bytes = key.as_ref();
 
     if bytes.is_empty() {

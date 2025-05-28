@@ -1,3 +1,5 @@
+//! FFI-compatible 'raw' structs matching the exact layout of the icon cache file.
+
 use std::ffi::{CStr, FromBytesUntilNulError};
 use std::marker::PhantomData;
 use zerocopy::{
