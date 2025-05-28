@@ -10,7 +10,7 @@
 
 use std::error::Error;
 use std::ffi::CStr;
-use zerocopy::{FromBytes, TryCastError};
+use zerocopy::FromBytes;
 
 pub mod raw;
 
@@ -62,7 +62,7 @@ impl<'a> IconCache<'a> {
         let n_buckets = self.hash.n_buckets.get();
         let bucket = hash % n_buckets;
 
-        let icons = self.icon_chain(bucket).ok()?.iter(self.bytes);
+        let icons = self.icon_chain(bucket)?.iter(self.bytes);
 
         for icon in icons {
             let Ok(name) = icon.name.str_at(self.bytes) else {
@@ -72,10 +72,7 @@ impl<'a> IconCache<'a> {
             if name.to_bytes() == icon_name {
                 return Some(Icon {
                     name,
-                    image_list: ImageList {
-                        bytes: self.bytes,
-                        raw_list: icon.image_list.at(self.bytes).ok()?,
-                    },
+                    image_list: ImageList::from_icon(icon, self.bytes)?,
                 });
             }
         }
@@ -83,20 +80,28 @@ impl<'a> IconCache<'a> {
         None
     }
 
-    // fn iter(&self) -> impl Iterator<Item=Icon<'a>> {
-    //     // (0..self.hash.n_buckets.get())
-    //     //     .flat_map(|bucket| self.icon_chain(bucket))
-    // 
-    //     todo!()
-    // }
+    pub fn iter(&self) -> impl Iterator<Item = Icon<'a>> {
+        (0..self.hash.n_buckets.get())
+            .filter_map(|bucket| self.icon_chain(bucket))
+            .flat_map(|chain| chain.iter(self.bytes))
+            .filter_map(|icon| {
+                Some(Icon {
+                    name: icon.name.str_at(self.bytes).ok()?,
+                    image_list: ImageList::from_icon(icon, self.bytes)?,
+                })
+            })
+    }
 
-    fn icon_chain(
-        &self,
-        bucket: u32,
-    ) -> Result<&'a raw::Icon, TryCastError<&'a [u8], raw::Icon>> {
+    fn icon_chain(&self, bucket: u32) -> Option<&'a raw::Icon> {
         debug_assert!(bucket < self.hash.n_buckets.get());
 
-        self.hash.icon[bucket as usize].at(self.bytes)
+        let offset = self.hash.icon[bucket as usize];
+        // A bucket may be empty!
+        if offset.is_null() {
+            return None;
+        }
+
+        offset.at(self.bytes).ok()
     }
 }
 
@@ -135,7 +140,7 @@ impl<'a> DirectoryList<'a> {
     }
 
     /// Returns an iterator over the directory list
-    pub fn iter(&self) -> impl Iterator<Item=&'a CStr> {
+    pub fn iter(&self) -> impl Iterator<Item = &'a CStr> {
         (0..self.len()).filter_map(|idx| self.dir(idx))
     }
 }
@@ -155,6 +160,13 @@ pub struct ImageList<'a> {
 }
 
 impl<'a> ImageList<'a> {
+    fn from_icon(icon: &raw::Icon, bytes: &'a [u8]) -> Option<ImageList<'a>> {
+        Some(Self {
+            bytes,
+            raw_list: icon.image_list.at(bytes).ok()?,
+        })
+    }
+
     /// Returns the amount of images in this list
     pub fn len(&self) -> u32 {
         self.raw_list.n_images.get()
@@ -212,7 +224,7 @@ impl<'a> ImageList<'a> {
     }
 
     /// Returns an iterator over the image list
-    pub fn iter(&self) -> impl Iterator<Item=Image<'a>> {
+    pub fn iter(&self) -> impl Iterator<Item = Image<'a>> {
         (0..self.len()).filter_map(|idx| self.image(idx))
     }
 }
@@ -254,7 +266,7 @@ mod tests {
     use zerocopy::network_endian::U16;
 
     // The included sample cache file was generated using the gtk-update-icon-cache utility
-    // from my system-installed Adwaita theme.
+    // from my system-installed hicolor theme.
     static SAMPLE_INDEX_FILE: &[u8] = include_bytes!("../assets/icon-theme.cache");
 
     #[test]
@@ -286,6 +298,15 @@ mod tests {
             raw::Flags::new(raw::Flags::HAS_SUFFIX_SVG)
         );
         assert!(image.image_data.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_icon_iter() -> Result<(), Box<dyn Error>> {
+        let cache = IconCache::new_from_bytes(SAMPLE_INDEX_FILE)?;
+
+        assert_eq!(cache.iter().count(), 563);
 
         Ok(())
     }
