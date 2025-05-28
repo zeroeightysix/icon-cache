@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "iconcache"
+name = "icon-cache"
 version = "0.1.0"
 dependencies = [
  "derive_more",
