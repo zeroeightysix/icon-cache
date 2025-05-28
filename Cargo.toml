@@ -1,7 +1,20 @@
 [package]
 name = "icon-cache"
+description = "Complete and user-friendly zero-copy wrappers for the GTK icon cache"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+include = [
+    "/Cargo.toml",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/README.md",
+    "/src/**"
+]
+repository = "https://github.com/zeroeightysix/icon-cache"
+readme = "README.md"
+keywords = ["icon", "cache", "gtk", "xdg"]
+categories = ["multimedia::images", "caching", "data-structures"]
 
 [features]
 default = ["file"]
