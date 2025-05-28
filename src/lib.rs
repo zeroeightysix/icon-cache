@@ -21,7 +21,7 @@ impl<'a> IconCache<'a> {
         let directory_list = header.directory_list.at(bytes)?;
         let directory_list = DirectoryList {
             bytes,
-            raw_list: directory_list
+            raw_list: directory_list,
         };
 
         Ok(IconCache {
@@ -82,23 +82,23 @@ impl<'a> DirectoryList<'a> {
     fn len(&self) -> u32 {
         self.raw_list.n_directories.get()
     }
-    
+
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    
+
     fn dir(&self, idx: u32) -> Option<&'a CStr> {
         if idx >= self.len() {
             return None;
         }
-        
-        self.raw_list.directory[idx as usize].str_at(self.bytes).ok()
+
+        self.raw_list.directory[idx as usize]
+            .str_at(self.bytes)
+            .ok()
     }
-    
+
     fn iter(&self) -> impl Iterator<Item = &'a CStr> {
-        (0..self.len())
-            .into_iter()
-            .filter_map(|idx| self.dir(idx))
+        (0..self.len()).into_iter().filter_map(|idx| self.dir(idx))
     }
 }
 
@@ -124,15 +124,20 @@ impl<'a> ImageList<'a> {
         self.len() == 0
     }
 
-    pub fn image(&self, idx: u32) -> Result<Image<'a>, Box<dyn Error + 'a>> {
+    pub fn image(&self, idx: u32) -> Option<Image<'a>> {
+        if idx >= self.len() {
+            return None;
+        }
+
         let raw_image = &self.raw_list.images[idx as usize];
 
         // TODO: how does the overhead of re-interpreting the header and directory list here over
         // passing those down from the cache struct, or alternatively re-introducing the ref to cache?
-        let (header, _) = raw::Header::ref_from_prefix(self.bytes)?;
-        let directory_list = header.directory_list.at(self.bytes)?;
+        let (header, _) = raw::Header::ref_from_prefix(self.bytes).ok()?;
+        let directory_list = header.directory_list.at(self.bytes).ok()?;
         let directory = directory_list.directory[raw_image.directory_index.get() as usize]
-            .str_at(self.bytes)?;
+            .str_at(self.bytes)
+            .ok()?;
 
         let icon_flags = raw_image.icon_flags;
 
@@ -144,50 +149,27 @@ impl<'a> ImageList<'a> {
                 image_meta_data,
                 image_pixel_data_length,
                 image_pixel_data_type,
-            } = raw_image.image_data.at(self.bytes)?;
+            } = raw_image.image_data.at(self.bytes).ok()?;
 
             image_data = Some(ImageData {
-                image_pixel_data: *image_pixel_data.at(self.bytes)?,
-                image_meta_data: image_meta_data.at(self.bytes)?,
-                image_pixel_data_type: *image_pixel_data_type.at(self.bytes)?,
-                image_pixel_data_length: *image_pixel_data_length.at(self.bytes)?,
+                image_pixel_data: *image_pixel_data.at(self.bytes).ok()?,
+                image_meta_data: image_meta_data.at(self.bytes).ok()?,
+                image_pixel_data_type: *image_pixel_data_type.at(self.bytes).ok()?,
+                image_pixel_data_length: *image_pixel_data_length.at(self.bytes).ok()?,
             });
         }
 
-        Ok(Image {
+        Some(Image {
             directory,
             icon_flags,
             image_data,
         })
     }
-}
 
-#[derive(Debug, Copy, Clone)]
-pub struct ImageListIter<'a> {
-    idx: u32,
-    list: ImageList<'a>,
-}
-
-impl<'a> Iterator for ImageListIter<'a> {
-    type Item = Image<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx >= self.list.len() {
-            return None;
-        }
-        
-        let result = self.list.image(self.idx).ok();
-        self.idx += 1;
-        result
-    }
-}
-
-impl<'a> IntoIterator for ImageList<'a> {
-    type Item = Image<'a>;
-    type IntoIter = ImageListIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        ImageListIter { idx: 0, list: self }
+    pub fn iter(&self) -> impl Iterator<Item = Image<'a>> {
+        (0..self.len())
+            .into_iter()
+            .filter_map(|idx| self.image(idx))
     }
 }
 
@@ -226,7 +208,7 @@ mod tests {
     use super::*;
     use crate::raw::Offset;
     use zerocopy::network_endian::U16;
-    
+
     // The included sample cache file was generated using the gtk-update-icon-cache utility
     // from my system-installed Adwaita theme.
     static SAMPLE_INDEX_FILE: &[u8] = include_bytes!("../assets/icon-theme.cache");
@@ -263,25 +245,25 @@ mod tests {
 
         Ok(())
     }
-    
+
     #[test]
-    fn test_imagelist_into_iter() -> Result<(), Box<dyn Error>> {
+    fn test_image_list_iter() -> Result<(), Box<dyn Error>> {
         let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
         let icon = cache.icon("mpv").unwrap();
-        
-        let count = icon.image_list.into_iter().count();
+
+        let count = icon.image_list.iter().count();
         assert_eq!(count, 5);
-        
+
         Ok(())
     }
-    
+
     #[test]
-    fn test_directorylist_into_iter() -> Result<(), Box<dyn Error>> {
+    fn test_directory_list_iter() -> Result<(), Box<dyn Error>> {
         let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
 
         assert!(!cache.directory_list.is_empty());
         assert_eq!(cache.directory_list.iter().count(), 59);
-        
+
         Ok(())
     }
 
