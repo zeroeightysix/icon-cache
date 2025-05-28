@@ -10,7 +10,7 @@ pub struct IconCache<'a> {
     pub bytes: &'a [u8],
     pub header: &'a raw::Header,
     pub hash: &'a raw::Hash,
-    pub directory_list: &'a raw::DirectoryList,
+    pub directory_list: DirectoryList<'a>,
 }
 
 impl<'a> IconCache<'a> {
@@ -19,6 +19,10 @@ impl<'a> IconCache<'a> {
 
         let hash = header.hash.at(bytes)?;
         let directory_list = header.directory_list.at(bytes)?;
+        let directory_list = DirectoryList {
+            bytes,
+            raw_list: directory_list
+        };
 
         Ok(IconCache {
             bytes,
@@ -63,6 +67,55 @@ impl<'a> IconCache<'a> {
         debug_assert!(bucket < self.hash.n_buckets.get());
 
         self.hash.icon[bucket as usize].at(self.bytes)
+    }
+}
+
+#[derive(derive_more::Debug, Copy, Clone)]
+pub struct DirectoryList<'a> {
+    #[debug(skip)]
+    bytes: &'a [u8],
+    pub raw_list: &'a raw::DirectoryList,
+}
+
+impl<'a> DirectoryList<'a> {
+    fn len(&self) -> u32 {
+        self.raw_list.n_directories.get()
+    }
+    
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct DirectoryListIter<'a> {
+    idx: u32,
+    list: DirectoryList<'a>
+}
+
+impl<'a> Iterator for DirectoryListIter<'a> {
+    type Item = &'a CStr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.list.len() {
+            return None;
+        }
+        
+        let result = self.list.raw_list.directory[self.idx as usize].str_at(self.list.bytes).ok();
+        self.idx += 1;
+        result
+    }
+}
+
+impl<'a> IntoIterator for DirectoryList<'a> {
+    type Item = &'a CStr;
+    type IntoIter = DirectoryListIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        DirectoryListIter {
+            idx: 0,
+            list: self,
+        }
     }
 }
 
@@ -231,11 +284,20 @@ mod tests {
     #[test]
     fn test_imagelist_into_iter() -> Result<(), Box<dyn Error>> {
         let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
-
         let icon = cache.icon("mpv").unwrap();
         
         let count = icon.image_list.into_iter().count();
         assert_eq!(count, 5);
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_directorylist_into_iter() -> Result<(), Box<dyn Error>> {
+        let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
+
+        assert!(!cache.directory_list.is_empty());
+        assert_eq!(cache.directory_list.into_iter().count(), 59);
         
         Ok(())
     }
