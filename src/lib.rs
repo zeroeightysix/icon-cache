@@ -13,6 +13,8 @@ use std::ffi::CStr;
 use std::path::Path;
 use zerocopy::FromBytes;
 
+#[cfg(feature = "file")]
+pub mod file;
 pub mod raw;
 
 /// Thin wrapper around an in-memory icon cache.
@@ -135,8 +137,7 @@ impl<'a> DirectoryList<'a> {
             return None;
         }
 
-        self.raw_list.directory[idx as usize]
-            .path_at(self.bytes)
+        self.raw_list.directory[idx as usize].path_at(self.bytes)
     }
 
     /// Returns an iterator over the directory list
