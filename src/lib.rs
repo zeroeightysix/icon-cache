@@ -78,6 +78,7 @@ pub struct DirectoryList<'a> {
 }
 
 impl<'a> DirectoryList<'a> {
+    #[inline(always)]
     fn len(&self) -> u32 {
         self.raw_list.n_directories.get()
     }
@@ -85,37 +86,19 @@ impl<'a> DirectoryList<'a> {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct DirectoryListIter<'a> {
-    idx: u32,
-    list: DirectoryList<'a>
-}
-
-impl<'a> Iterator for DirectoryListIter<'a> {
-    type Item = &'a CStr;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx >= self.list.len() {
+    
+    fn dir(&self, idx: u32) -> Option<&'a CStr> {
+        if idx >= self.len() {
             return None;
         }
         
-        let result = self.list.raw_list.directory[self.idx as usize].str_at(self.list.bytes).ok();
-        self.idx += 1;
-        result
+        self.raw_list.directory[idx as usize].str_at(self.bytes).ok()
     }
-}
-
-impl<'a> IntoIterator for DirectoryList<'a> {
-    type Item = &'a CStr;
-    type IntoIter = DirectoryListIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        DirectoryListIter {
-            idx: 0,
-            list: self,
-        }
+    
+    fn iter(&self) -> impl Iterator<Item = &'a CStr> {
+        (0..self.len())
+            .into_iter()
+            .filter_map(|idx| self.dir(idx))
     }
 }
 
@@ -297,7 +280,7 @@ mod tests {
         let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
 
         assert!(!cache.directory_list.is_empty());
-        assert_eq!(cache.directory_list.into_iter().count(), 59);
+        assert_eq!(cache.directory_list.iter().count(), 59);
         
         Ok(())
     }
