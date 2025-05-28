@@ -1,10 +1,10 @@
 //! Complete and user-friendly zero-copy wrappers for the GTK icon cache which is present on most
 //! linux systems.
-//! 
+//!
 //! GTK's icon cache maintains a hash-indexed map from icon names (e.g. `open-menu`) to a list of
 //! images representing that icon, each in a different directory, usually denoting that icon's size,
 //! whether it's scalable, etc.
-//! 
+//!
 //! This crate provides a safe wrapper around this cache and is designed for use with `mmap`.
 //! To get started, look at [IconCache].
 
@@ -54,7 +54,7 @@ impl<'a> IconCache<'a> {
 
     /// Look up an icon by name in the cache. `icon_name` accepts any type that turns into a byte
     /// slice: typically `str` suffices.
-    /// 
+    ///
     /// Returns `None` if no icon by that name exists within the icon theme, or if parsing failed.
     pub fn icon(&self, icon_name: impl AsRef<[u8]>) -> Option<Icon<'a>> {
         let icon_name = icon_name.as_ref();
@@ -62,30 +62,34 @@ impl<'a> IconCache<'a> {
         let n_buckets = self.hash.n_buckets.get();
         let bucket = hash % n_buckets;
 
-        let mut icon = self.icon_chain(bucket).ok()?;
-        loop {
-            if let Ok(name) = icon.name.str_at(self.bytes) {
-                if name.to_bytes() == icon_name {
-                    return Some(Icon {
-                        name,
-                        image_list: ImageList {
-                            bytes: self.bytes,
-                            raw_list: icon.image_list.at(self.bytes).ok()?,
-                        },
-                    });
-                }
-            }
+        let icons = self.icon_chain(bucket).ok()?.iter(self.bytes);
 
-            if icon.chain.offset == 0xFFFFFFFF {
-                return None;
-            }
+        for icon in icons {
+            let Ok(name) = icon.name.str_at(self.bytes) else {
+                continue;
+            };
 
-            icon = icon.chain.at(self.bytes).ok()?;
+            if name.to_bytes() == icon_name {
+                return Some(Icon {
+                    name,
+                    image_list: ImageList {
+                        bytes: self.bytes,
+                        raw_list: icon.image_list.at(self.bytes).ok()?,
+                    },
+                });
+            }
         }
+
+        None
     }
-    
-    // TODO: iter()
-    
+
+    // fn iter(&self) -> impl Iterator<Item=Icon<'a>> {
+    //     // (0..self.hash.n_buckets.get())
+    //     //     .flat_map(|bucket| self.icon_chain(bucket))
+    // 
+    //     todo!()
+    // }
+
     fn icon_chain(
         &self,
         bucket: u32,
@@ -118,7 +122,7 @@ impl<'a> DirectoryList<'a> {
     }
 
     /// Access a directory by its index in the list.
-    /// 
+    ///
     /// Returns `None` if the index larger than the length of the list.
     pub fn dir(&self, idx: u32) -> Option<&'a CStr> {
         if idx >= self.len() {
@@ -131,7 +135,7 @@ impl<'a> DirectoryList<'a> {
     }
 
     /// Returns an iterator over the directory list
-    pub fn iter(&self) -> impl Iterator<Item = &'a CStr> {
+    pub fn iter(&self) -> impl Iterator<Item=&'a CStr> {
         (0..self.len()).filter_map(|idx| self.dir(idx))
     }
 }
@@ -208,7 +212,7 @@ impl<'a> ImageList<'a> {
     }
 
     /// Returns an iterator over the image list
-    pub fn iter(&self) -> impl Iterator<Item = Image<'a>> {
+    pub fn iter(&self) -> impl Iterator<Item=Image<'a>> {
         (0..self.len()).filter_map(|idx| self.image(idx))
     }
 }

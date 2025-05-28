@@ -93,6 +93,27 @@ pub struct Icon {
     pub image_list: Offset<U32, ImageList>,
 }
 
+impl Icon {
+    pub(crate) fn iter<'a>(&'a self, bytes: &'a [u8]) -> impl Iterator<Item = &'a Icon> {
+        let mut icon = Some(self);
+        
+        std::iter::from_fn(move || {
+            let result = icon;
+            
+            if let Some(result) = result {
+                if result.chain.offset == 0xFFFFFFFF {
+                    icon = None; // Next `result` will be None
+                    return Some(result);
+                }
+                
+                icon = result.chain.at(bytes).ok()
+            }
+            
+            result
+        })
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, FromBytes, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct ImageList {
