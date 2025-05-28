@@ -6,9 +6,10 @@ use zerocopy::{
 };
 
 #[repr(C)]
-#[derive(Debug, FromBytes, KnownLayout, Immutable, Eq, PartialEq)]
+#[derive(derive_more::Debug, FromBytes, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct Offset<V, T: ?Sized> {
     pub offset: V,
+    #[debug(skip)]
     marker: PhantomData<T>,
 }
 
@@ -108,20 +109,20 @@ pub struct Image {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Default, FromBytes, Immutable, Eq, PartialEq)]
 pub struct Flags {
-    value: U32,
+    value: U16,
 }
 
 impl Flags {
-    pub const HAS_SUFFIX_XPM: U32 = U32::new(1);
-    pub const HAS_SUFFIX_SVG: U32 = U32::new(2);
-    pub const HAS_SUFFIX_PNG: U32 = U32::new(4);
-    pub const HAS_ICON_FILE: U32 = U32::new(8);
+    pub const HAS_SUFFIX_XPM: U16 = U16::new(1);
+    pub const HAS_SUFFIX_SVG: U16 = U16::new(2);
+    pub const HAS_SUFFIX_PNG: U16 = U16::new(4);
+    pub const HAS_ICON_FILE: U16 = U16::new(8);
 
-    pub fn new(value: U32) -> Self {
+    pub fn new(value: U16) -> Self {
         Flags { value }
     }
 
-    pub fn bits(&self) -> U32 {
+    pub fn bits(&self) -> U16 {
         self.value
     }
 
@@ -141,10 +142,10 @@ impl Flags {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, FromBytes, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct ImageData {
-    pub image_pixel_data: U32,
+    pub image_pixel_data: Offset<U32, ()>,
     pub image_meta_data: Offset<U32, MetaData>,
-    pub image_pixel_data_type: U32,
-    pub image_pixel_data_length: U32,
+    pub image_pixel_data_type: Offset<U32, ()>,
+    pub image_pixel_data_length: Offset<U32, ()>,
     // pixel_data
 }
 

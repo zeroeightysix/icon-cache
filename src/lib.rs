@@ -76,7 +76,7 @@ pub struct Icon<'a> {
 #[derive(derive_more::Debug, Copy, Clone)]
 pub struct ImageList<'a> {
     #[debug(skip)]
-    pub bytes: &'a [u8],
+    bytes: &'a [u8],
     pub raw_list: &'a raw::ImageList,
 }
 
@@ -103,9 +103,26 @@ impl<'a> ImageList<'a> {
 
         let icon_flags = raw_image.icon_flags;
 
-        let image_data = raw_image.image_data.at(self.bytes)?;
+        let mut image_data = None;
+        
+        if raw_image.image_data.offset != 0 {
+            let &raw::ImageData {
+                image_pixel_data,
+                image_meta_data,
+                image_pixel_data_length,
+                image_pixel_data_type
+            } = raw_image.image_data.at(self.bytes)?;
+
+            image_data = Some(ImageData {
+                image_pixel_data: *image_pixel_data.at(self.bytes)?,
+                image_meta_data: image_meta_data.at(self.bytes)?,
+                image_pixel_data_type: *image_pixel_data_type.at(self.bytes)?,
+                image_pixel_data_length: *image_pixel_data_length.at(self.bytes)?,
+            });
+        }
 
         Ok(Image {
+            bytes: self.bytes,
             directory,
             icon_flags,
             image_data,
@@ -115,12 +132,20 @@ impl<'a> ImageList<'a> {
 
 #[derive(derive_more::Debug, Copy, Clone)]
 pub struct Image<'a> {
+    #[debug(skip)]
+    bytes: &'a [u8],
     pub directory: &'a CStr,
     pub icon_flags: raw::Flags,
-    pub image_data: &'a raw::ImageData,
+    pub image_data: Option<ImageData<'a>>,
 }
 
-pub struct ImageData {}
+#[derive(derive_more::Debug, Copy, Clone)]
+pub struct ImageData<'a> {
+    pub image_pixel_data: (), // TODO: what type is this?
+    pub image_meta_data: &'a raw::MetaData,
+    pub image_pixel_data_type: (),
+    pub image_pixel_data_length: (),
+}
 
 pub fn icon_str_hash(key: impl AsRef<[u8]>) -> u32 {
     let bytes = key.as_ref();
@@ -154,10 +179,10 @@ mod tests {
         assert_eq!(
             cache.header,
             &Header {
-                major_version: U16::new(1,),
-                minor_version: U16::new(0,),
-                hash: Offset::new(12,),
-                directory_list: Offset::new(37788,),
+                major_version: U16::new(1, ),
+                minor_version: U16::new(0, ),
+                hash: Offset::new(12, ),
+                directory_list: Offset::new(37788, ),
             }
         );
 
@@ -188,5 +213,10 @@ mod tests {
     #[test]
     fn icon_str_hash_sym() {
         assert_eq!(icon_str_hash("preferences-other-symbolic") % 251, 243);
+    }
+    
+    #[test]
+    fn image_size_correct() {
+        assert_eq!(size_of::<raw::Image>(), 8);
     }
 }
