@@ -1,4 +1,3 @@
-use crate::raw::{DirectoryList, Hash, Header};
 use std::error::Error;
 use std::ffi::CStr;
 use zerocopy::{FromBytes, TryCastError};
@@ -9,14 +8,14 @@ pub mod raw;
 pub struct IconCache<'a> {
     #[debug(skip)]
     pub bytes: &'a [u8],
-    pub header: &'a Header,
-    pub hash: &'a Hash,
-    pub directory_list: &'a DirectoryList,
+    pub header: &'a raw::Header,
+    pub hash: &'a raw::Hash,
+    pub directory_list: &'a raw::DirectoryList,
 }
 
 impl<'a> IconCache<'a> {
     pub fn new_from_bytes(bytes: &'a [u8]) -> Result<Self, Box<dyn Error + 'a>> {
-        let (header, _) = Header::ref_from_prefix(bytes)?;
+        let (header, _) = raw::Header::ref_from_prefix(bytes)?;
 
         let hash = header.hash.at(bytes)?;
         let directory_list = header.directory_list.at(bytes)?;
@@ -94,7 +93,7 @@ impl<'a> ImageList<'a> {
 
         // TODO: how does the overhead of re-interpreting the header and directory list here over
         // passing those down from the cache struct, or alternatively re-introducing the ref to cache?
-        let (header, _) = Header::ref_from_prefix(self.bytes)?;
+        let (header, _) = raw::Header::ref_from_prefix(self.bytes)?;
         let directory_list = header.directory_list.at(self.bytes)?;
         let directory = directory_list.directory[raw_image.directory_index.get() as usize]
             .str_at(self.bytes)?;
@@ -202,7 +201,7 @@ mod tests {
 
         assert_eq!(
             cache.header,
-            &Header {
+            &raw::Header {
                 major_version: U16::new(1),
                 minor_version: U16::new(0),
                 hash: Offset::new(12),
