@@ -86,8 +86,8 @@ pub struct Hash {
 #[repr(C)]
 #[derive(Debug, FromBytes, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct Icon {
-    pub chain: Offset<U32, Icon>, // Points to another Icon
-    pub name: Offset<U32, CStr>,  // Points to a C string
+    pub chain: Offset<U32, Icon>,
+    pub name: Offset<U32, CStr>,
     pub image_list: Offset<U32, ImageList>,
 }
 

@@ -73,6 +73,7 @@ impl<'a> IconCache<'a> {
 #[derive(derive_more::Debug, Copy, Clone)]
 pub struct DirectoryList<'a> {
     #[debug(skip)]
+    #[allow(unused)] // clippy thinks this is unused but it isn't? maybe because of the Debug
     bytes: &'a [u8],
     pub raw_list: &'a raw::DirectoryList,
 }
@@ -98,7 +99,7 @@ impl<'a> DirectoryList<'a> {
     }
 
     fn iter(&self) -> impl Iterator<Item = &'a CStr> {
-        (0..self.len()).into_iter().filter_map(|idx| self.dir(idx))
+        (0..self.len()).filter_map(|idx| self.dir(idx))
     }
 }
 
@@ -168,7 +169,6 @@ impl<'a> ImageList<'a> {
 
     pub fn iter(&self) -> impl Iterator<Item = Image<'a>> {
         (0..self.len())
-            .into_iter()
             .filter_map(|idx| self.image(idx))
     }
 }
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_find_specific_icon() -> Result<(), Box<dyn Error>> {
-        let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
+        let cache = IconCache::new_from_bytes(SAMPLE_INDEX_FILE)?;
 
         assert_eq!(
             cache.header,
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_image_list_iter() -> Result<(), Box<dyn Error>> {
-        let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
+        let cache = IconCache::new_from_bytes(SAMPLE_INDEX_FILE)?;
         let icon = cache.icon("mpv").unwrap();
 
         let count = icon.image_list.iter().count();
@@ -259,7 +259,10 @@ mod tests {
 
     #[test]
     fn test_directory_list_iter() -> Result<(), Box<dyn Error>> {
-        let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
+        let cache = IconCache::new_from_bytes(SAMPLE_INDEX_FILE)?;
+        let dir_list = cache.directory_list;
+
+        assert_eq!(dir_list.len(), 59);
 
         assert!(!cache.directory_list.is_empty());
         assert_eq!(cache.directory_list.iter().count(), 59);
