@@ -2,6 +2,7 @@
 
 use std::ffi::{CStr, FromBytesUntilNulError};
 use std::marker::PhantomData;
+use std::path::Path;
 use zerocopy::{
     byteorder::network_endian::{U16, U32},
     *,
@@ -26,6 +27,28 @@ where
     }
 }
 
+impl<V> Offset<V, CStr>
+where
+    V: Into<u32> + Copy,
+{
+    pub fn str_at<'a>(&self, bytes: &'a [u8]) -> Result<&'a CStr, FromBytesUntilNulError> {
+        let offset = self.offset.into() as usize;
+        CStr::from_bytes_until_nul(&bytes[offset..])
+    }
+}
+
+impl<V> Offset<V, Path>
+where
+    V: Into<u32> + Copy,
+{
+    pub fn path_at<'a>(&self, bytes: &'a [u8]) -> Option<&'a Path> {
+        let offset = self.offset.into() as usize;
+        let cstr = CStr::from_bytes_until_nul(&bytes[offset..]).ok()?;
+        let str = cstr.to_str().ok()?;
+        Some(Path::new(str))
+    }
+}
+
 impl<V, T: ?Sized> Clone for Offset<V, T>
 where
     V: Clone,
@@ -39,16 +62,6 @@ where
 }
 
 impl<V, T: ?Sized> Copy for Offset<V, T> where V: Copy {}
-
-impl<V> Offset<V, CStr>
-where
-    V: Into<u32> + Copy,
-{
-    pub fn str_at<'a>(&self, bytes: &'a [u8]) -> Result<&'a CStr, FromBytesUntilNulError> {
-        let offset = self.offset.into() as usize;
-        CStr::from_bytes_until_nul(&bytes[offset..])
-    }
-}
 
 impl<V, T> Offset<V, T>
 where
@@ -85,7 +98,7 @@ pub struct Header {
 #[derive(Debug, FromBytes, KnownLayout, Immutable, Eq, PartialEq)]
 pub struct DirectoryList {
     pub n_directories: U32,
-    pub directory: [Offset<U32, CStr>],
+    pub directory: [Offset<U32, Path>],
 }
 
 #[repr(C)]

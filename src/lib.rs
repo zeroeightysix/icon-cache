@@ -10,6 +10,7 @@
 
 use std::error::Error;
 use std::ffi::CStr;
+use std::path::Path;
 use zerocopy::FromBytes;
 
 pub mod raw;
@@ -129,18 +130,17 @@ impl<'a> DirectoryList<'a> {
     /// Access a directory by its index in the list.
     ///
     /// Returns `None` if the index larger than the length of the list.
-    pub fn dir(&self, idx: u32) -> Option<&'a CStr> {
+    pub fn dir(&self, idx: u32) -> Option<&'a Path> {
         if idx >= self.len() {
             return None;
         }
 
         self.raw_list.directory[idx as usize]
-            .str_at(self.bytes)
-            .ok()
+            .path_at(self.bytes)
     }
 
     /// Returns an iterator over the directory list
-    pub fn iter(&self) -> impl Iterator<Item = &'a CStr> {
+    pub fn iter(&self) -> impl Iterator<Item = &'a Path> {
         (0..self.len()).filter_map(|idx| self.dir(idx))
     }
 }
@@ -193,8 +193,7 @@ impl<'a> ImageList<'a> {
         let (header, _) = raw::Header::ref_from_prefix(self.bytes).ok()?;
         let directory_list = header.directory_list.at(self.bytes).ok()?;
         let directory = directory_list.directory[raw_image.directory_index.get() as usize]
-            .str_at(self.bytes)
-            .ok()?;
+            .path_at(self.bytes)?;
 
         let icon_flags = raw_image.icon_flags;
 
@@ -231,7 +230,7 @@ impl<'a> ImageList<'a> {
 
 #[derive(derive_more::Debug, Copy, Clone)]
 pub struct Image<'a> {
-    pub directory: &'a CStr,
+    pub directory: &'a Path,
     pub icon_flags: raw::Flags,
     pub image_data: Option<ImageData<'a>>,
 }
@@ -292,7 +291,7 @@ mod tests {
 
         let image = &icon.image_list.image(0).unwrap();
 
-        assert_eq!(image.directory.to_str(), Ok("scalable/apps"));
+        assert_eq!(image.directory.to_str(), Some("scalable/apps"));
         assert_eq!(
             image.icon_flags,
             raw::Flags::new(raw::Flags::HAS_SUFFIX_SVG)
