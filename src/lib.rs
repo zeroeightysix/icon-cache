@@ -7,9 +7,9 @@
 //!
 //! This crate provides a safe wrapper around this cache and is designed for use with `mmap`.
 //! To get started, look at [IconCache].
-//! 
+//!
 //! # Feature flags
-//! 
+//!
 //! * `file`: Enables the [mod@file] module to safely open and memory-map cache files. Enabled by default.
 
 use std::error::Error;

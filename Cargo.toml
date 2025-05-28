@@ -26,3 +26,6 @@ zerocopy = { version = "0.8.25", features = ["derive"] }
 
 file-lock = { version = "2.1.11", optional = true }
 memmap2 = { version = "0.9.5", optional = true }
+
+[dev-dependencies]
+mktemp = "0.5.1"

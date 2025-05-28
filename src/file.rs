@@ -15,10 +15,10 @@ pub mod reexports {
 }
 
 /// Provides access to an [IconCache] constructed from a file that is guaranteed not to be modified.
-/// 
+///
 /// `OwnedIconCache` holds a lock on the cache file and creates a memory-mapped region with the file's
 /// contents inside. It does not copy the file contents.
-/// 
+///
 /// To access the icon cache, use [OwnedIconCache::icon_cache]
 #[derive(Debug)]
 pub struct OwnedIconCache {
@@ -35,7 +35,7 @@ impl OwnedIconCache {
         Self::create(path, true)
     }
 
-    /// Open and lock a file, returning an error if an exclusive lock on the file was already held 
+    /// Open and lock a file, returning an error if an exclusive lock on the file was already held
     /// by another process.
     pub fn open_non_blocking(path: impl AsRef<Path>) -> std::io::Result<Self> {
         Self::create(path, false)
@@ -51,7 +51,7 @@ impl OwnedIconCache {
 
     fn create(path: impl AsRef<Path>, blocking: bool) -> std::io::Result<Self> {
         let path = path.as_ref();
-        let options = file_lock::FileOptions::new().write(false); // we explicitly do NOT want to write to the cache!
+        let options = file_lock::FileOptions::new().read(true).write(false); // we explicitly do NOT want to write to the cache!
 
         let lock = FileLock::lock(path, blocking, options)?;
 
@@ -66,5 +66,59 @@ impl OwnedIconCache {
         let memmap = unsafe { Mmap::map(fd)? };
 
         Ok(Self { lock, memmap })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::file::OwnedIconCache;
+    use crate::raw;
+    use crate::raw::Offset;
+    use std::error::Error;
+    use std::ops::Deref;
+    use std::sync::LazyLock;
+    use zerocopy::U16;
+
+    use mktemp::Temp;
+
+    static SAMPLE_INDEX_FILE: &[u8] = include_bytes!("../assets/icon-theme.cache");
+    static TEMP_FILE: LazyLock<Temp> = LazyLock::new(|| create_test_cache().unwrap());
+
+    fn create_test_cache() -> std::io::Result<Temp> {
+        let temp = Temp::new_file()?;
+
+        std::fs::write(temp.as_path(), SAMPLE_INDEX_FILE)?;
+
+        Ok(temp)
+    }
+
+    #[test]
+    fn open_test_file() -> std::io::Result<()> {
+        let path = TEMP_FILE.as_path();
+        let _file = OwnedIconCache::open_non_blocking(path)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn mmap_correct() -> Result<(), Box<dyn Error>> {
+        let path = TEMP_FILE.as_path();
+        let file = OwnedIconCache::open_non_blocking(path)?;
+
+        assert_eq!(file.memmap.deref(), SAMPLE_INDEX_FILE);
+
+        let icon_cache = file.icon_cache().unwrap();
+
+        assert_eq!(
+            icon_cache.header,
+            &raw::Header {
+                major_version: U16::new(1),
+                minor_version: U16::new(0),
+                hash: Offset::new(12),
+                directory_list: Offset::new(35812)
+            }
+        );
+
+        Ok(())
     }
 }
