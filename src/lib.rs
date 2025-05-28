@@ -29,7 +29,7 @@ impl<'a> IconCache<'a> {
         })
     }
 
-    pub fn icon<'c: 'a>(&'c self, icon_name: impl AsRef<[u8]>) -> Option<Icon<'a>> {
+    pub fn icon(&self, icon_name: impl AsRef<[u8]>) -> Option<Icon<'a>> {
         let icon_name = icon_name.as_ref();
         let hash = icon_str_hash(icon_name);
         let n_buckets = self.hash.n_buckets.get();
@@ -90,8 +90,6 @@ impl<'a> ImageList<'a> {
     }
 
     pub fn image(&self, idx: u32) -> Result<Image<'a>, Box<dyn Error + 'a>> {
-        debug_assert!(idx < self.raw_list.n_images.get());
-
         let raw_image = &self.raw_list.images[idx as usize];
 
         // TODO: how does the overhead of re-interpreting the header and directory list here over
@@ -126,6 +124,35 @@ impl<'a> ImageList<'a> {
             icon_flags,
             image_data,
         })
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct ImageListIter<'a> {
+    idx: u32,
+    list: ImageList<'a>,
+}
+
+impl<'a> Iterator for ImageListIter<'a> {
+    type Item = Image<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.list.len() {
+            return None;
+        }
+        
+        let result = self.list.image(self.idx).ok();
+        self.idx += 1;
+        result
+    }
+}
+
+impl<'a> IntoIterator for ImageList<'a> {
+    type Item = Image<'a>;
+    type IntoIter = ImageListIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ImageListIter { idx: 0, list: self }
     }
 }
 
@@ -164,41 +191,53 @@ mod tests {
     use super::*;
     use crate::raw::Offset;
     use zerocopy::network_endian::U16;
+    
+    // The included sample cache file was generated using the gtk-update-icon-cache utility
+    // from my system-installed Adwaita theme.
+    static SAMPLE_INDEX_FILE: &[u8] = include_bytes!("../assets/icon-theme.cache");
 
     #[test]
     fn test_find_specific_icon() -> Result<(), Box<dyn Error>> {
-        // The included sample cache file was generated using the gtk-update-icon-cache utility
-        // from my system-installed Adwaita theme.
-        static SAMPLE_INDEX_FILE: &[u8] = include_bytes!("../assets/icon-theme.cache");
-
         let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
 
         assert_eq!(
             cache.header,
             &Header {
-                major_version: U16::new(1,),
-                minor_version: U16::new(0,),
-                hash: Offset::new(12,),
-                directory_list: Offset::new(37788,),
+                major_version: U16::new(1),
+                minor_version: U16::new(0),
+                hash: Offset::new(12),
+                directory_list: Offset::new(35812)
             }
         );
 
         assert_eq!(cache.hash.n_buckets, 251);
 
-        let icon = cache.icon("preferences-other-symbolic").unwrap();
+        let icon = cache.icon("mpv").unwrap();
 
-        assert_eq!(icon.name.to_str(), Ok("preferences-other-symbolic"));
-        assert_eq!(icon.image_list.len(), 1);
+        assert_eq!(icon.name.to_str(), Ok("mpv"));
+        assert_eq!(icon.image_list.len(), 5);
 
         let image = &icon.image_list.image(0).unwrap();
 
-        assert_eq!(image.directory.to_str(), Ok("symbolic/categories"));
+        assert_eq!(image.directory.to_str(), Ok("scalable/apps"));
         assert_eq!(
             image.icon_flags,
             raw::Flags::new(raw::Flags::HAS_SUFFIX_SVG)
         );
         assert!(image.image_data.is_none());
 
+        Ok(())
+    }
+    
+    #[test]
+    fn test_imagelist_into_iter() -> Result<(), Box<dyn Error>> {
+        let cache = IconCache::new_from_bytes(&SAMPLE_INDEX_FILE)?;
+
+        let icon = cache.icon("mpv").unwrap();
+        
+        let count = icon.image_list.into_iter().count();
+        assert_eq!(count, 5);
+        
         Ok(())
     }
 
