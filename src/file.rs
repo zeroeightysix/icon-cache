@@ -46,15 +46,15 @@ impl OwnedIconCache {
     /// Returns an error if the cache could not be parsed.
     pub fn icon_cache<'a>(&'a self) -> Result<IconCache<'a>, Box<dyn Error + 'a>> {
         let bytes = self.memmap.deref();
+        
         IconCache::new_from_bytes(bytes)
     }
 
     fn create(path: impl AsRef<Path>, blocking: bool) -> std::io::Result<Self> {
         let path = path.as_ref();
         let options = file_lock::FileOptions::new().read(true).write(false); // we explicitly do NOT want to write to the cache!
-
         let lock = FileLock::lock(path, blocking, options)?;
-
+        
         Self::from_lock(lock)
     }
 
@@ -117,6 +117,18 @@ mod tests {
                 hash: Offset::new(12),
                 directory_list: Offset::new(35812)
             }
+        );
+        
+        assert_eq!(
+            icon_cache.hash.n_buckets.get() as usize,
+            icon_cache.hash.icon.len(),
+            "claimed hash len is the same as parsed len"
+        );
+
+        assert_eq!(
+            icon_cache.directory_list.raw_list.n_directories.get() as usize,
+            icon_cache.directory_list.raw_list.directory.len(),
+            "claimed directory list len is the same as parsed len"
         );
 
         Ok(())

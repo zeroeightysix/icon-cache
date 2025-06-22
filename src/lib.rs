@@ -15,7 +15,7 @@
 use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
-use zerocopy::FromBytes;
+use zerocopy::{network_endian, FromBytes};
 
 #[cfg(feature = "file")]
 pub mod file;
@@ -43,14 +43,21 @@ pub struct IconCache<'a> {
 impl<'a> IconCache<'a> {
     pub fn new_from_bytes(bytes: &'a [u8]) -> Result<Self, Box<dyn Error + 'a>> {
         let (header, _) = raw::Header::ref_from_prefix(bytes)?;
+        
+        let hash_offset = header.hash.offset.get() as usize;
+        let dir_list_offset = header.directory_list.offset.get() as usize;
+        
+        let (hash_len, _) = network_endian::U32::read_from_prefix(&bytes[hash_offset..])?;
+        let (dir_len, _) = network_endian::U32::read_from_prefix(&bytes[dir_list_offset..])?;
+        
+        let (hash, _) = raw::Hash::ref_from_prefix_with_elems(&bytes[hash_offset..], hash_len.get() as usize)?;
+        let (directory_list, _) = raw::DirectoryList::ref_from_prefix_with_elems(&bytes[dir_list_offset..], dir_len.get() as usize)?;
 
-        let hash = header.hash.at(bytes)?;
-        let directory_list = header.directory_list.at(bytes)?;
         let directory_list = DirectoryList {
             bytes,
             raw_list: directory_list,
         };
-
+        
         Ok(IconCache {
             bytes,
             header,
